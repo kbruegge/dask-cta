@@ -1,5 +1,4 @@
 from ctapipe.image.cleaning import tailcuts_clean
-from ctapipe.io import CameraGeometry
 from ctapipe.image.hillas import hillas_parameters
 from ctapipe.reco.FitGammaHillas import FitGammaHillas
 import numpy as np
@@ -13,10 +12,11 @@ import pickle
 import os.path
 import logging
 from itertools import cycle
-from random import random
 from ctapipe.io.containers import InstrumentContainer
 
-# from functools import lru_cache
+
+def batch_reco(dicts, instrument_dict):
+    return [reco(e, instrument_dict) for e in dicts]
 
 
 def reco(hillas_dict, instrument_dict):
@@ -34,6 +34,10 @@ def reco(hillas_dict, instrument_dict):
 
     logging.info('Finished reco')
     return fit_result
+
+
+def batch_hillas(events, geoms):
+    return [hillas(e, geoms) for e in events]
 
 
 def hillas(event, geoms):
@@ -74,11 +78,10 @@ def load_event_generator(working_dir):
     return cycle(events)
 
 
-def add_event_to_queue(q, events):
+def load_data(q, events, batch_size=5):
     while True:
-        logging.info('emitting event')
-        q.put(next(events))
-        time.sleep(0.01)
+        q.put([next(events) for k in range(batch_size)])
+        time.sleep(1)
 
 
 def monitor_q(q, name='result queue'):
@@ -88,13 +91,21 @@ def monitor_q(q, name='result queue'):
 
 
 def get_results(q):
+    s = time.time()
     while True:
         results = [q.get() for i in range(q.qsize())]
+
         if results:
-            print('Latest results: {} elements of type {}'.format(len(results), type(results[0])))
+            r = len(results)
+            l = len(results[0])
+            dt = time.time() - s
+            s = time.time()
+            print('Latest results: {} elements of length {} in {:.1f} seconds \n'
+                  'thats {:.2f} elements per second'.format(r, l, dt,  r*l/dt))
+
         else:
             print('no results')
-        time.sleep(random() + 1.5)
+        time.sleep(5)
 
 
 def main():
@@ -116,7 +127,7 @@ def main():
     instrument = load_instrument('./').as_dict()
     geoms = load_cam_geoms('./')
 
-    logging.info('loaded isntrument and geometries, distributing to workers')
+    logging.info('loaded instrument and geometries, distributing to workers')
     instrument_remote = client.scatter(instrument, broadcast=True)
     geometries_remote = client.scatter(geoms, broadcast=True)
 
@@ -126,16 +137,14 @@ def main():
     input_q = Queue(maxsize=200)
     remote_queue = client.scatter(input_q)
 
-    hillas_q = client.map(hillas, remote_queue, **{'geoms': geometries_remote})
-    reco_q = client.map(reco,  hillas_q, **{'instrument_dict': instrument_remote})
+    hillas_q = client.map(batch_hillas, remote_queue, **{'geoms': geometries_remote})
+    reco_q = client.map(batch_reco,  hillas_q, **{'instrument_dict': instrument_remote})
 
     result_q = client.gather(reco_q)
-    # print(type(result_q))
-    from threading import Thread
-    Thread(target=add_event_to_queue, args=(input_q, generator), daemon=True).start()
 
-    Thread(target=monitor_q, args=(result_q, ), daemon=True).start()
-    #
+    from threading import Thread
+    Thread(target=load_data, args=(input_q, generator, 5), daemon=True).start()
+
     Thread(target=monitor_q, args=(input_q, 'input queue'), daemon=True).start()
 
     get_results(result_q)
