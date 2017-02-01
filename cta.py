@@ -13,25 +13,16 @@ import pickle
 import os.path
 import logging
 from itertools import cycle
-from tqdm import tqdm
+from random import random
+from ctapipe.io.containers import InstrumentContainer
+
 # from functools import lru_cache
 
 
-# logger = logging.getLogger('CTA')
+def reco(hillas_dict, instrument_dict):
+    instrument = InstrumentContainer()
+    instrument.__dict__ = instrument_dict
 
-
-def get_cam_geoms(instrument):
-    geoms = {}
-    for tel_id, pixel_pos in tqdm(instrument.pixel_pos.items()):
-        pix_x = pixel_pos[0]
-        pix_y = pixel_pos[1]
-        foc = instrument.optical_foclen[tel_id]
-        geoms[tel_id] = CameraGeometry.guess(pix_x, pix_y, foc)
-
-    return geoms
-
-
-def reconstruction(hillas_dict, instrument):
     logging.info('starting reco for dict: {}'.format(hillas_dict))
     tel_phi = {tel_id: 0*u.deg for tel_id in hillas_dict.keys()}
     tel_theta = {tel_id: 20*u.deg for tel_id in hillas_dict.keys()}
@@ -47,7 +38,6 @@ def reconstruction(hillas_dict, instrument):
 
 def hillas(event, geoms):
     hillas_dict = {}
-
     for tel_id in event['data']:
         pmt_signal = np.array(event['data'][tel_id]['adc_sums'])
         cam_geom = geoms[tel_id]
@@ -88,20 +78,24 @@ def add_event_to_queue(q, events):
     while True:
         logging.info('emitting event')
         q.put(next(events))
-        time.sleep(0.1)
+        time.sleep(0.01)
 
 
 def monitor_q(q, name='result queue'):
     while True:
         print('Items currently in {} : {}'.format(name, q.qsize()))
-        time.sleep(0.5)
-
+        time.sleep(5)
 
 
 def get_results(q):
     while True:
-        print('Latest result: {}'.format(q.get()))
-        time.sleep(1)
+        results = [q.get() for i in range(q.qsize())]
+        if results:
+            print('Latest results: {} elements of type {}'.format(len(results), type(results[0])))
+        else:
+            print('no results')
+        time.sleep(random() + 1.5)
+
 
 def main():
 
@@ -110,32 +104,41 @@ def main():
         with gzip.open(p, 'rb') as f:
             return pickle.load(f)
 
+    def load_cam_geoms(DIR):
+        p = os.path.join(DIR, 'resources', 'geoms.pickle.gz')
+        with gzip.open(p, 'rb') as f:
+            return pickle.load(f)
+
     from distributed import Client
     client = Client('127.0.0.1:8786')
 
     generator = load_event_generator('./')
-    instrument = load_instrument('./')
-    geoms = get_cam_geoms(instrument)
+    instrument = load_instrument('./').as_dict()
+    geoms = load_cam_geoms('./')
 
-    logging.info('loaded geometries')
-    # from IPython import embed
-    # embed()
-    input_q = Queue()
+    logging.info('loaded isntrument and geometries, distributing to workers')
+    instrument_remote = client.scatter(instrument, broadcast=True)
+    geometries_remote = client.scatter(geoms, broadcast=True)
+
+    # hillas = partial(hillas, geoms=geometries_remote)
+    # reco = partial(reco, instrument=instrument_remote)
+
+    input_q = Queue(maxsize=200)
     remote_queue = client.scatter(input_q)
 
-    hillas_q = client.map(lambda x: hillas(x, geoms), remote_queue)
-    reco_q = client.map(lambda x: reconstruction(x, instrument), hillas_q)
+    hillas_q = client.map(hillas, remote_queue, **{'geoms': geometries_remote})
+    reco_q = client.map(reco,  hillas_q, **{'instrument_dict': instrument_remote})
 
     result_q = client.gather(reco_q)
     # print(type(result_q))
     from threading import Thread
-    Thread(target=add_event_to_queue, args=(input_q, generator)).start()
+    Thread(target=add_event_to_queue, args=(input_q, generator), daemon=True).start()
 
-    Thread(target=monitor_q, args=(result_q, )).start()
+    Thread(target=monitor_q, args=(result_q, ), daemon=True).start()
+    #
+    Thread(target=monitor_q, args=(input_q, 'input queue'), daemon=True).start()
 
-    Thread(target=monitor_q, args=(input_q, 'input queue')).start()
-
-    Thread(target=get_results, args=(result_q, )).start()
+    get_results(result_q)
 
 if __name__ == '__main__':
     main()
