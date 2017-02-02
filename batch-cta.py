@@ -8,6 +8,8 @@ import time
 import logging
 from ctapipe.io.containers import InstrumentContainer
 from cta import load_cam_geoms, load_instrument, load_event_generator
+from joblib import Parallel, delayed
+from threading import Thread
 
 
 def reco(hillas_dict, instrument_dict):
@@ -27,8 +29,13 @@ def reco(hillas_dict, instrument_dict):
     return fit_result
 
 
+def batch_hillas(events, geoms):
+    return [hillas(e, geoms) for e in events]
+
+
 def hillas(event, geoms):
     hillas_dict = {}
+    # print(event)
     for tel_id in event['data']:
         pmt_signal = np.array(event['data'][tel_id]['adc_sums'])
         cam_geom = geoms[tel_id]
@@ -45,10 +52,10 @@ def hillas(event, geoms):
     return hillas_dict
 
 
-def load_data(q, events, batch_size=5):
+def load_data(q, events, batch_size=100, sleep=2):
     while True:
         q.put([next(events) for k in range(batch_size)])
-        time.sleep(1)
+        time.sleep(sleep)
 
 
 def monitor_q(q, name='result queue'):
@@ -76,35 +83,25 @@ def get_results(q):
 
 
 def main():
+    generator = load_event_generator()
+    # instrument = load_instrument().as_dict()
+    geoms = load_cam_geoms()
 
-    from distributed import Client
-    client = Client('127.0.0.1:8786')
+    input_q = Queue(maxsize=20)
 
-    generator = load_event_generator('./')
-    instrument = load_instrument('./').as_dict()
-    geoms = load_cam_geoms('./')
-
-    logging.info('loaded instrument and geometries, distributing to workers')
-    instrument_remote = client.scatter(instrument, broadcast=True)
-    geometries_remote = client.scatter(geoms, broadcast=True)
-
-    # hillas = partial(hillas, geoms=geometries_remote)
-    # reco = partial(reco, instrument=instrument_remote)
-
-    input_q = Queue(maxsize=200)
-    remote_queue = client.scatter(input_q)
-
-    hillas_q = client.map(batch_hillas, remote_queue, **{'geoms': geometries_remote})
-    reco_q = client.map(batch_reco,  hillas_q, **{'instrument_dict': instrument_remote})
-
-    result_q = client.gather(reco_q)
-
-    from threading import Thread
-    Thread(target=load_data, args=(input_q, generator, 40), daemon=True).start()
+    Thread(target=load_data, args=(input_q, generator, 4, 0.01), daemon=True).start()
 
     Thread(target=monitor_q, args=(input_q, 'input queue'), daemon=True).start()
 
-    get_results(result_q)
+    with Parallel(n_jobs=4) as parallel:
+        n_iter = 0
+        while n_iter < 1000:
+            batches = [input_q.get() for _ in range(input_q.qsize())]
+            print('number of batches {}'.format(len(batches)))
+            results = parallel(delayed(batch_hillas)(events, geoms) for events in batches)
+
+            print('number of results:{}'.format(len(results)))
+            n_iter += 1
 
 if __name__ == '__main__':
     main()

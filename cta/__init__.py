@@ -13,13 +13,13 @@ def load_instrument():
 
 
 def load_cam_geoms():
-    p = pkg_resources.resource_filename(__name__, 'resources/instrument.pickle.gz')
+    p = pkg_resources.resource_filename(__name__, 'resources/geoms.pickle.gz')
     with gzip.open(p, 'rb') as f:
         return pickle.load(f)
 
 
-def load_event_generator(working_dir):
-    p = os.path.join(working_dir, 'resources', 'gammas.pickle.gz')
+def load_event_generator():
+    p = pkg_resources.resource_filename(__name__, 'resources/gammas.pickle.gz')
     with gzip.open(p, 'rb') as f:
         event_list = pickle.load(f)
 
