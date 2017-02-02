@@ -80,13 +80,13 @@ def load_event_generator(working_dir):
 def load_data(q, events, batch_size=5):
     while True:
         q.put([next(events) for k in range(batch_size)])
-        time.sleep(1)
+        time.sleep(0.12)
 
 
 def monitor_q(q, name='result queue'):
     while True:
         print('Items currently in {} : {}'.format(name, q.qsize()))
-        time.sleep(5)
+        time.sleep(1)
 
 
 def get_results(q):
@@ -144,6 +144,10 @@ def main():
     from threading import Thread
     Thread(target=load_data, args=(input_q, generator, 40), daemon=True).start()
 
+
+    #Thread(target=load_data, args=(input_q, generator, 90), daemon=True).start()
+
+    #Thread(target=load_data, args=(input_q, generator, 60), daemon=True).start()
     Thread(target=monitor_q, args=(input_q, 'input queue'), daemon=True).start()
 
     get_results(result_q)
