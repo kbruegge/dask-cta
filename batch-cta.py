@@ -29,7 +29,10 @@ def reco(hillas_dict, instrument_dict):
     return fit_result
 
 
-def batch_hillas(events, geoms):
+geoms = load_cam_geoms()
+
+
+def batch_hillas(events):
     return [hillas(e, geoms) for e in events]
 
 
@@ -82,23 +85,24 @@ def get_results(q):
         time.sleep(5)
 
 
+
+
 def main():
     generator = load_event_generator()
     # instrument = load_instrument().as_dict()
-    geoms = load_cam_geoms()
 
-    input_q = Queue(maxsize=20)
+    input_q = Queue(maxsize=96)
 
-    Thread(target=load_data, args=(input_q, generator, 4, 0.01), daemon=True).start()
+    Thread(target=load_data, args=(input_q, generator, 10, 0.01), daemon=True).start()
 
     Thread(target=monitor_q, args=(input_q, 'input queue'), daemon=True).start()
 
-    with Parallel(n_jobs=4) as parallel:
+    with Parallel(n_jobs=48) as parallel:
         n_iter = 0
         while n_iter < 1000:
             batches = [input_q.get() for _ in range(input_q.qsize())]
             print('number of batches {}'.format(len(batches)))
-            results = parallel(delayed(batch_hillas)(events, geoms) for events in batches)
+            results = parallel(delayed(batch_hillas)(events) for events in batches)
 
             print('number of results:{}'.format(len(results)))
             n_iter += 1
