@@ -10,6 +10,7 @@ from ctapipe.io.containers import InstrumentContainer
 from cta import load_cam_geoms, load_instrument, load_event_generator
 from joblib import Parallel, delayed
 from threading import Thread
+import click
 
 
 def reco(hillas_dict, instrument_dict):
@@ -29,8 +30,8 @@ def reco(hillas_dict, instrument_dict):
     return fit_result
 
 
-def batch_hillas(events, geoms):
-    return [hillas(e, geoms) for e in events]
+def batch_analysis(events, geoms, instrument):
+    return [reco(hillas(e, geoms), instrument) for e in events]
 
 
 def hillas(event, geoms):
@@ -82,25 +83,32 @@ def get_results(q):
         time.sleep(5)
 
 
-def main():
+@click.command()
+@click.option('--batch_size', '-b', default=1, help='Number of events in one batch.')
+@click.option('--input_q_size', '-qs', default=10, help='Number of events to hold in the input queue.')
+@click.option('--sleep', '-s', default=0.01, help='Delay until new batch is pushed into queue.')
+@click.option('--jobs', '-j', default=2, help='Number of jobs to use.')
+def main(batch_size, input_q_size, sleep, jobs):
     generator = load_event_generator()
     # instrument = load_instrument().as_dict()
     geoms = load_cam_geoms()
 
-    input_q = Queue(maxsize=20)
+    input_q = Queue(maxsize=input_q_size)
 
-    Thread(target=load_data, args=(input_q, generator, 4, 0.01), daemon=True).start()
+    Thread(target=load_data, args=(input_q, generator, batch_size, sleep), daemon=True).start()
 
     Thread(target=monitor_q, args=(input_q, 'input queue'), daemon=True).start()
 
-    with Parallel(n_jobs=4) as parallel:
+    Thread(target=get_results, args=(input_q,), daemon=True).start()
+
+    with Parallel(n_jobs=jobs) as parallel:
         n_iter = 0
         while n_iter < 1000:
             batches = [input_q.get() for _ in range(input_q.qsize())]
-            print('number of batches {}'.format(len(batches)))
+            # print('number of batches {}'.format(len(batches)))
             results = parallel(delayed(batch_hillas)(events, geoms) for events in batches)
 
-            print('number of results:{}'.format(len(results)))
+            # print('number of results:{}'.format(len(results)))
             n_iter += 1
 
 if __name__ == '__main__':

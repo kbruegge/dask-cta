@@ -1,4 +1,3 @@
-import os
 import gzip
 import pickle
 from itertools import cycle
