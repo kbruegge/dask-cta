@@ -30,7 +30,11 @@ def reco(hillas_dict, instrument_dict):
     return fit_result
 
 
-def batch_analysis(events, geoms, instrument):
+instrument = load_instrument().as_dict()
+geoms = load_cam_geoms()
+
+
+def batch_analysis(events):
     return [reco(hillas(e, geoms), instrument) for e in events]
 
 
@@ -77,9 +81,6 @@ def get_results(q):
             s = time.time()
             print('Latest results: {} elements of length {} in {:.1f} seconds \n'
                   'thats {:.2f} elements per second'.format(r, l, dt,  r*l/dt))
-
-        else:
-            print('no results')
         time.sleep(5)
 
 
@@ -91,23 +92,23 @@ def get_results(q):
 def main(batch_size, input_q_size, sleep, jobs):
     generator = load_event_generator()
     # instrument = load_instrument().as_dict()
-    geoms = load_cam_geoms()
-
     input_q = Queue(maxsize=input_q_size)
+
+    output_q = Queue(maxsize=100)
 
     Thread(target=load_data, args=(input_q, generator, batch_size, sleep), daemon=True).start()
 
     Thread(target=monitor_q, args=(input_q, 'input queue'), daemon=True).start()
 
-    Thread(target=get_results, args=(input_q,), daemon=True).start()
+    Thread(target=get_results, args=(output_q,), daemon=True).start()
 
     with Parallel(n_jobs=jobs) as parallel:
         n_iter = 0
         while n_iter < 1000:
             batches = [input_q.get() for _ in range(input_q.qsize())]
             # print('number of batches {}'.format(len(batches)))
-            results = parallel(delayed(batch_hillas)(events, geoms) for events in batches)
-
+            results = parallel(delayed(batch_analysis)(events) for events in batches)
+            output_q.put(results)
             # print('number of results:{}'.format(len(results)))
             n_iter += 1
 
