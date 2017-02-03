@@ -76,11 +76,12 @@ def get_results(q):
 
         if results:
             r = len(results)
-            l = len(results[0])
+            b = len(results[0])
+            e = len(results[0][0])
             dt = time.time() - s
             s = time.time()
-            print('Latest results: {} elements of length {} in {:.1f} seconds \n'
-                  'thats {:.2f} elements per second'.format(r, l, dt,  r*l/dt))
+            print('Got {} results of {} batches containing {} events in {:.1f} seconds \n'
+                  'thats {:.2f} elements per second'.format(r, b, e, dt,  (r*b*e)/dt))
         time.sleep(5)
 
 
