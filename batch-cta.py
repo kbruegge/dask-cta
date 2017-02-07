@@ -8,9 +8,11 @@ import time
 import logging
 from ctapipe.io.containers import InstrumentContainer
 from cta import load_cam_geoms, load_instrument, load_event_generator
-from joblib import Parallel, delayed
 from threading import Thread
 import click
+
+import distributed.joblib
+from joblib import Parallel, parallel_backend, delayed
 
 
 def reco(hillas_dict, instrument_dict):
@@ -90,7 +92,9 @@ def get_results(q):
 @click.option('--input_q_size', '-qs', default=10, help='Number of events to hold in the input queue.')
 @click.option('--sleep', '-s', default=0.01, help='Delay until new batch is pushed into queue.')
 @click.option('--jobs', '-j', default=2, help='Number of jobs to use.')
-def main(batch_size, input_q_size, sleep, jobs):
+@click.option('--distributed', 'local_execution', flag_value=True, default=True)
+@click.option('--local', 'local_execution', flag_value=False)
+def main(batch_size, input_q_size, sleep, jobs, local_execution):
     generator = load_event_generator()
     # instrument = load_instrument().as_dict()
     input_q = Queue(maxsize=input_q_size)
@@ -103,15 +107,25 @@ def main(batch_size, input_q_size, sleep, jobs):
 
     Thread(target=get_results, args=(output_q,), daemon=True).start()
 
-    with Parallel(n_jobs=jobs) as parallel:
-        n_iter = 0
-        while n_iter < 1000:
-            batches = [input_q.get() for _ in range(input_q.qsize())]
-            # print('number of batches {}'.format(len(batches)))
-            results = parallel(delayed(batch_analysis)(events) for events in batches)
-            output_q.put(results)
-            # print('number of results:{}'.format(len(results)))
-            n_iter += 1
+    if local_execution:
+        with Parallel(n_jobs=jobs) as parallel:
+            execute(input_q, output_q, parallel)
+
+    else:
+        with parallel_backend('dask.distributed', scheduler_host='127.0.0.1:8786'):
+            parallel = Parallel()
+            execute(input_q, output_q, parallel)
+
+
+def execute(input_q, output_q, parallel):
+    n_iter = 0
+    while n_iter < 1000:
+        batches = [input_q.get() for _ in range(input_q.qsize())]
+        # print('number of batches {}'.format(len(batches)))
+        results = parallel(delayed(batch_analysis)(events) for events in batches)
+        output_q.put(results)
+        # print('number of results:{}'.format(len(results)))
+        n_iter += 1
 
 if __name__ == '__main__':
     main()
