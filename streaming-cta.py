@@ -20,6 +20,7 @@ def batch_hillas(events, geoms):
 def load_data(q, events, batch_size=100, sleep=2):
     while True:
         q.put([next(events) for k in range(batch_size)])
+        # print('added {} events to queue. It now holds {} items'.format(batch_size, q.qsize()))
         time.sleep(sleep)
 
 
@@ -35,20 +36,20 @@ def get_results(q):
         results = [q.get() for i in range(q.qsize())]
 
         if results:
+            # print(results)
             r = len(results)
             b = len(results[0])
-            e = len(results[0][0])
             dt = time.time() - s
             s = time.time()
-            print('Got {} results of {} batches containing {} events in {:.1f} seconds \n'
-                  'thats {:.2f} elements per second'.format(r, b, e, dt,  (r*b*e)/dt))
+            print('Got {} batches containing {} events in {:.1f} seconds \n'
+                  'thats {:.2f} elements per second'.format(r, b, dt,  (r*b)/dt))
         time.sleep(5)
 
 
 @click.command()
-@click.option('--batch_size', '-b', default=1, help='Number of events in one batch.')
+@click.option('--batch_size', '-b', default=2, help='Number of events in one batch.')
 @click.option('--input_q_size', '-qs', default=10, help='Number of events to hold in the input queue.')
-@click.option('--sleep', '-s', default=1, help='Delay until new batch is pushed into queue.')
+@click.option('--sleep', '-s', default=1.0, help='Delay until new batch is pushed into queue.')
 def main(batch_size, input_q_size, sleep):
 
     generator = load_event_generator()
@@ -67,7 +68,6 @@ def main(batch_size, input_q_size, sleep):
 
     hillas_q = client.map(batch_hillas, remote_queue, **{'geoms': geometries_remote})
     reco_q = client.map(batch_reco,  hillas_q, **{'instrument_dict': instrument_remote})
-
     result_q = client.gather(reco_q)
 
     from threading import Thread
