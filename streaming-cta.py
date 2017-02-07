@@ -1,17 +1,20 @@
 from queue import Queue
 import time
 import logging
-from cta import load_cam_geoms, load_instrument, load_event_generator
-import cta.analysis
 import click
+from distributed import Client
+from daskcta import load_cam_geoms, load_instrument, load_event_generator
+import daskcta.analysis as analysis
+
+client = Client('127.0.0.1:8786')
 
 
 def batch_reco(dicts, instrument_dict):
-    return [cta.analysis.reco(e, instrument_dict) for e in dicts]
+    return [analysis.reco(e, instrument_dict) for e in dicts]
 
 
 def batch_hillas(events, geoms):
-    return [cta.analysis.hillas(e, geoms) for e in events]
+    return [analysis.hillas(e, geoms) for e in events]
 
 
 def load_data(q, events, batch_size=100, sleep=2):
@@ -45,11 +48,8 @@ def get_results(q):
 @click.command()
 @click.option('--batch_size', '-b', default=1, help='Number of events in one batch.')
 @click.option('--input_q_size', '-qs', default=10, help='Number of events to hold in the input queue.')
-@click.option('--sleep', '-s', default=0.01, help='Delay until new batch is pushed into queue.')
+@click.option('--sleep', '-s', default=1, help='Delay until new batch is pushed into queue.')
 def main(batch_size, input_q_size, sleep):
-
-    from distributed import Client
-    client = Client('127.0.0.1:8786')
 
     generator = load_event_generator()
     instrument = load_instrument().as_dict()
