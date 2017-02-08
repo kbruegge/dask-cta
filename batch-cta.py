@@ -1,13 +1,8 @@
-from ctapipe.image.cleaning import tailcuts_clean
-from ctapipe.image.hillas import hillas_parameters
-from ctapipe.reco.FitGammaHillas import FitGammaHillas
-import numpy as np
 from queue import Queue
-from astropy import units as u
 import time
-import logging
 from ctapipe.io.containers import InstrumentContainer
-from cta import load_cam_geoms, load_instrument, load_event_generator
+from daskcta import load_cam_geoms, load_instrument, load_event_generator
+from daskcta import analysis
 from threading import Thread
 import click
 
@@ -15,48 +10,12 @@ import distributed.joblib
 from joblib import Parallel, parallel_backend, delayed
 
 
-def reco(hillas_dict, instrument_dict):
-    instrument = InstrumentContainer()
-    instrument.__dict__ = instrument_dict
-
-    logging.info('starting reco for dict: {}'.format(hillas_dict))
-    tel_phi = {tel_id: 0*u.deg for tel_id in hillas_dict.keys()}
-    tel_theta = {tel_id: 20*u.deg for tel_id in hillas_dict.keys()}
-    fit_result = FitGammaHillas().predict(
-                            hillas_dict,
-                            instrument,
-                            tel_phi,
-                            tel_theta)
-
-    logging.info('Finished reco')
-    return fit_result
-
-
 instrument = load_instrument().as_dict()
 geoms = load_cam_geoms()
 
 
 def batch_analysis(events):
-    return [reco(hillas(e, geoms), instrument) for e in events]
-
-
-def hillas(event, geoms):
-    hillas_dict = {}
-    # print(event)
-    for tel_id in event['data']:
-        pmt_signal = np.array(event['data'][tel_id]['adc_sums'])
-        cam_geom = geoms[tel_id]
-        mask = tailcuts_clean(cam_geom, pmt_signal, 1,
-                              picture_thresh=10., boundary_thresh=5.)
-        pmt_signal[mask == 0] = 0
-
-        moments = hillas_parameters(cam_geom.pix_x,
-                                    cam_geom.pix_y,
-                                    pmt_signal)
-
-        hillas_dict[tel_id] = moments
-
-    return hillas_dict
+    return [analysis.reco(analysis.hillas(e, geoms), instrument) for e in events]
 
 
 def load_data(q, events, batch_size=100, sleep=2):
@@ -77,13 +36,14 @@ def get_results(q):
         results = [q.get() for i in range(q.qsize())]
 
         if results:
+            # print(results)
             r = len(results)
             b = len(results[0])
             e = len(results[0][0])
             dt = time.time() - s
             s = time.time()
-            print('Got {} results of {} batches containing {} events in {:.1f} seconds \n'
-                  'thats {:.2f} elements per second'.format(r, b, e, dt,  (r*b*e)/dt))
+            print('Got {} batches containing {} events in {:.1f} seconds \n'
+                  'thats {:.2f} elements per second'.format(r, b, dt,  (r*b*e)/dt))
         time.sleep(5)
 
 
@@ -92,8 +52,8 @@ def get_results(q):
 @click.option('--input_q_size', '-qs', default=10, help='Number of events to hold in the input queue.')
 @click.option('--sleep', '-s', default=0.01, help='Delay until new batch is pushed into queue.')
 @click.option('--jobs', '-j', default=2, help='Number of jobs to use.')
-@click.option('--distributed', 'local_execution', flag_value=False)
-@click.option('--local', 'local_execution', flag_value=True, default=True)
+@click.option('--distributed', 'local_execution', flag_value=False, help='execute on dask workers')
+@click.option('--local', 'local_execution', flag_value=True, default=True, help='execute localy')
 def main(batch_size, input_q_size, sleep, jobs, local_execution):
     generator = load_event_generator()
     # instrument = load_instrument().as_dict()
@@ -103,7 +63,7 @@ def main(batch_size, input_q_size, sleep, jobs, local_execution):
 
     Thread(target=load_data, args=(input_q, generator, batch_size, sleep), daemon=True).start()
 
-    Thread(target=monitor_q, args=(input_q, 'input queue'), daemon=True).start()
+    # Thread(target=monitor_q, args=(input_q, 'input queue'), daemon=True).start()
 
     Thread(target=get_results, args=(output_q,), daemon=True).start()
 
@@ -121,9 +81,8 @@ def main(batch_size, input_q_size, sleep, jobs, local_execution):
 def execute(input_q, output_q, parallel):
     n_iter = 0
     while n_iter < 1000:
-        batches = [input_q.get() for _ in range(input_q.qsize())]
-        # print('number of batches {}'.format(len(batches)))
-        results = parallel(delayed(batch_analysis)(events) for events in batches)
+        batch = input_q.get()
+        results = parallel(delayed(batch_analysis)([event]) for event in batch)
         output_q.put(results)
         # print('number of results:{}'.format(len(results)))
         n_iter += 1
