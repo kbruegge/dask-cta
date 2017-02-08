@@ -51,7 +51,7 @@ def get_results(q):
 @click.option('--input_q_size', '-qs', default=10, help='Number of events to hold in the input queue.')
 @click.option('--sleep', '-s', default=1.0, help='Delay until new batch is pushed into queue.')
 def main(batch_size, input_q_size, sleep):
-
+    print('Starting CTA stream with batch size of {} and a new batch every {} seconds'.format(batch_size, sleep))
     generator = load_event_generator()
     instrument = load_instrument().as_dict()
     geoms = load_cam_geoms()
