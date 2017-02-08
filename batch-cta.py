@@ -92,8 +92,8 @@ def get_results(q):
 @click.option('--input_q_size', '-qs', default=10, help='Number of events to hold in the input queue.')
 @click.option('--sleep', '-s', default=0.01, help='Delay until new batch is pushed into queue.')
 @click.option('--jobs', '-j', default=2, help='Number of jobs to use.')
-@click.option('--distributed', 'local_execution', flag_value=True, default=True)
-@click.option('--local', 'local_execution', flag_value=False)
+@click.option('--distributed', 'local_execution', flag_value=False)
+@click.option('--local', 'local_execution', flag_value=True, default=True)
 def main(batch_size, input_q_size, sleep, jobs, local_execution):
     generator = load_event_generator()
     # instrument = load_instrument().as_dict()
@@ -108,6 +108,7 @@ def main(batch_size, input_q_size, sleep, jobs, local_execution):
     Thread(target=get_results, args=(output_q,), daemon=True).start()
 
     if local_execution:
+        print('Starting local execution on {} cores'.format(jobs))
         with Parallel(n_jobs=jobs) as parallel:
             execute(input_q, output_q, parallel)
 
